@@ -1,6 +1,6 @@
-# Legacy SQL Trace Profiler 1.0
+# Legacy SQL Trace Profiler 1.0.1
 
-macOS용 VS Code에서 SQL Server의 Legacy SQL Trace를 실시간으로 확인하는 Extension입니다. Extended Events 권한 없이 `ALTER TRACE` 권한과 `sp_trace_*` 계열을 사용합니다.
+Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로 확인하는 Extension입니다. Extended Events 권한 없이 `ALTER TRACE` 권한과 `sp_trace_*` 계열을 사용하며, 운영체제별 네이티브 실행 파일에 의존하지 않습니다.
 
 ## V1 기능
 
@@ -11,14 +11,16 @@ macOS용 VS Code에서 SQL Server의 Legacy SQL Trace를 실시간으로 확인�
 - TextData, LoginName, DatabaseName, ApplicationName, HostName, SPID, Duration, Reads, Writes, CPU 서버 필터
 - 시작, 정지, 재개, 종료 및 종료 후 결과 유지
 - 행 번호, EventClass, TextData, LoginName 실시간 목록
+- 일반 클릭 단건 선택, Shift+클릭 범위 선택 및 선택된 SQL의 목록 순서 누적 표시·복사
 - 캡처 후 TextData, EventClass, LoginName 화면 필터
 - SQL 전문, 간단한 구문 강조, 보기용 줄바꿈 정리, 원문 복사
+- VS Code 좌측 Activity Bar의 SQL Trace Profiler 보기
 
 ## 설치 및 실행
 
 1. VS Code의 Extensions 화면에서 `...` → `Install from VSIX...`를 선택합니다.
-2. `legacy-sql-trace-profiler-1.0.0.vsix`를 선택합니다.
-3. 명령 팔레트에서 `Legacy SQL Trace Profiler: Open Profiler`를 실행합니다.
+2. `legacy-sql-trace-profiler-1.0.1.vsix`를 선택합니다.
+3. 좌측 Activity Bar의 데이터베이스 아이콘을 누르고 `프로파일러 열기`를 선택합니다. 명령 팔레트의 `Legacy SQL Trace Profiler: Open Profiler`도 사용할 수 있습니다.
 4. 연결 프로필을 저장하고 이벤트·필터를 선택한 뒤 시작합니다.
 
 기본 계정에 `ALTER TRACE` 권한이 없다면 프로필에서 별도 Trace 전용 계정을 켭니다. 정지는 서버 Trace의 신규 수집을 멈추고, 시작을 다시 누르면 기존 결과를 유지한 채 재개합니다. 종료는 서버 Trace 자원을 제거하지만 화면의 결과는 유지합니다.
@@ -49,16 +51,26 @@ macOS용 VS Code에서 SQL Server의 Legacy SQL Trace를 실시간으로 확인�
 
 사용자 요구사항에 따라 비밀번호는 JSON에 평문으로 저장되며 내보낸 파일에도 포함됩니다.
 
-## 개발
+## VSIX 빌드 및 배포
 
-```text
+Node.js 18 이상이 설치된 Windows 또는 macOS 터미널에서 다음 명령을 실행합니다.
+
+```shell
 npm install
 npm test
 npm run build
 npm run package
 ```
 
-F5로 Extension Development Host를 실행할 수도 있습니다.
+완성된 `legacy-sql-trace-profiler-1.0.1.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 이 파일을 전달하고, 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다. Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
+
+## 개발 중 바로 확인
+
+VSIX를 매번 만들 필요 없이 이 프로젝트를 VS Code로 열고 F5를 눌러 Extension Development Host를 실행합니다. 별도 터미널에서 `npm run watch`를 실행하면 소스 변경이 자동 빌드되며, 개발 호스트에서 Windows/Linux는 `Ctrl+R`, macOS는 `Cmd+R`로 다시 로드하면 최신 변경을 확인할 수 있습니다. `media`의 화면 파일을 변경한 경우에도 프로파일러 탭을 닫고 다시 열거나 개발 호스트를 다시 로드합니다.
+
+## 플랫폼 참고
+
+Extension 실행 코드는 VS Code가 지원하는 Windows와 macOS에서 동일하게 동작합니다. 다만 실제 연결 성공 여부는 SQL Server 네트워크 접근, 방화벽, TLS 인증서, SQL 로그인 및 `ALTER TRACE` 권한 설정의 영향을 받습니다.
 
 ## 현재 검증 범위
 

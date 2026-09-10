@@ -2,7 +2,7 @@
 
 const vscode = acquireVsCodeApi();
 const $ = (id) => document.getElementById(id);
-const state = { profiles: [], events: [], selected: null, status: 'idle', formatted: false };
+const state = { profiles: [], events: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, status: 'idle', formatted: false };
 
 const eventDefinitions = [
   [10, 'RPC:Completed', true], [11, 'RPC:Starting', true],
@@ -57,7 +57,8 @@ function bindActions() {
     renderSqlDetail();
   });
   $('copySql').addEventListener('click', () => {
-    if (state.selected) vscode.postMessage({ type: 'copy', text: state.selected.textData || '' });
+    const text = selectedEvents().map((event) => event.textData || '').filter(Boolean).join('\n\n');
+    if (text) vscode.postMessage({ type: 'copy', text });
   });
 }
 
@@ -221,15 +222,22 @@ function startTrace() {
 }
 
 function appendEvent(event) {
-  event.rowNumber = state.events.length + 1;
+  event.rowNumber = state.nextRowNumber;
+  state.nextRowNumber += 1;
   state.events.push(event);
-  if (state.events.length > 10000) state.events.shift();
+  if (state.events.length > 10000) {
+    const removed = state.events.shift();
+    state.selectedRows.delete(removed.rowNumber);
+    if (state.selectionAnchor === removed.rowNumber) state.selectionAnchor = null;
+  }
   renderEvents();
 }
 
 function clearEvents() {
   state.events = [];
-  state.selected = null;
+  state.selectedRows.clear();
+  state.selectionAnchor = null;
+  state.nextRowNumber = 1;
   renderEvents();
   renderSqlDetail();
 }
@@ -251,7 +259,7 @@ function renderEvents() {
   const visible = visibleEvents();
   for (const event of visible) {
     const tr = document.createElement('tr');
-    if (state.selected === event) tr.classList.add('selected');
+    if (state.selectedRows.has(event.rowNumber)) tr.classList.add('selected');
     const values = [event.rowNumber, event.eventClass, oneLine(event.textData), event.loginName || ''];
     values.forEach((value, index) => {
       const td = document.createElement('td');
@@ -259,11 +267,7 @@ function renderEvents() {
       if (index === 2) td.title = event.textData || '';
       tr.append(td);
     });
-    tr.addEventListener('click', () => {
-      state.selected = event;
-      renderEvents();
-      renderSqlDetail();
-    });
+    tr.addEventListener('click', (clickEvent) => selectEvent(event, clickEvent.shiftKey, visible));
     rows.append(tr);
   }
   $('emptyState').classList.toggle('hidden', visible.length > 0);
@@ -273,13 +277,34 @@ function renderEvents() {
 function renderSqlDetail() {
   const code = $('sqlDetail').querySelector('code');
   code.replaceChildren();
-  if (!state.selected) {
+  const selected = selectedEvents();
+  if (!selected.length) {
     code.textContent = '선택한 이벤트의 SQL 전문이 여기에 표시됩니다.';
     return;
   }
-  const raw = state.selected.textData || '';
+  const raw = selected.map((event) => event.textData || '').filter(Boolean).join('\n\n');
   const text = state.formatted ? formatSql(raw) : raw;
   highlightSql(code, text);
+}
+
+function selectedEvents() {
+  return state.events.filter((event) => state.selectedRows.has(event.rowNumber));
+}
+
+function selectEvent(event, extendRange, visible) {
+  const anchorIndex = visible.findIndex((item) => item.rowNumber === state.selectionAnchor);
+  const targetIndex = visible.findIndex((item) => item.rowNumber === event.rowNumber);
+  state.selectedRows.clear();
+  if (extendRange && anchorIndex >= 0 && targetIndex >= 0) {
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    for (const item of visible.slice(start, end + 1)) state.selectedRows.add(item.rowNumber);
+  } else {
+    state.selectedRows.add(event.rowNumber);
+    state.selectionAnchor = event.rowNumber;
+  }
+  renderEvents();
+  renderSqlDetail();
 }
 
 function highlightSql(target, sql) {

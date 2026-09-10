@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-sql-profiler-vsix-'));
 const extensionDir = path.join(stage, 'extension');
-const output = path.resolve(root, '..', 'outputs', `legacy-sql-trace-profiler-${manifest.version}.vsix`);
+const output = path.join(root, 'outputs', `legacy-sql-trace-profiler-${manifest.version}.vsix`);
 
 try {
   fs.mkdirSync(extensionDir, { recursive: true });
@@ -19,11 +19,30 @@ try {
   fs.writeFileSync(path.join(stage, 'extension.vsixmanifest'), vsixManifest(manifest), 'utf8');
   fs.mkdirSync(path.dirname(output), { recursive: true });
   if (fs.existsSync(output)) fs.rmSync(output);
-  const result = spawnSync('/usr/bin/zip', ['-q', '-r', output, '[Content_Types].xml', 'extension.vsixmanifest', 'extension'], { cwd: stage, encoding: 'utf8' });
+  const result = createArchive(stage, output);
   if (result.status !== 0) throw new Error(result.stderr || 'zip failed');
   console.log(output);
 } finally {
   fs.rmSync(stage, { recursive: true, force: true });
+}
+
+function createArchive(stageDirectory, outputFile) {
+  if (process.platform === 'win32') {
+    const source = path.join(stageDirectory, '*').replace(/'/g, "''");
+    const zipOutput = `${outputFile}.zip`;
+    const destination = zipOutput.replace(/'/g, "''");
+    if (fs.existsSync(zipOutput)) fs.rmSync(zipOutput);
+    const result = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      `Compress-Archive -Path '${source}' -DestinationPath '${destination}' -Force`
+    ], { encoding: 'utf8' });
+    if (result.status === 0) fs.renameSync(zipOutput, outputFile);
+    return result;
+  }
+  return spawnSync('zip', ['-q', '-r', outputFile, '[Content_Types].xml', 'extension.vsixmanifest', 'extension'], {
+    cwd: stageDirectory,
+    encoding: 'utf8'
+  });
 }
 
 function contentTypes() {

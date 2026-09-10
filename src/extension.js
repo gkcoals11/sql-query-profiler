@@ -7,13 +7,26 @@ const { LegacyTraceClient } = require('./traceClient');
 let activePanel;
 
 function activate(context) {
-  context.subscriptions.push(vscode.commands.registerCommand('legacySqlTraceProfiler.open', async () => {
+  const openProfiler = async () => {
     if (activePanel) {
       activePanel.reveal();
       return;
     }
     activePanel = new ProfilerPanel(context);
     await activePanel.initialize();
+  };
+  context.subscriptions.push(vscode.commands.registerCommand('legacySqlTraceProfiler.open', async () => {
+    await openProfiler();
+  }));
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('legacySqlTraceProfiler.actions', {
+    getTreeItem: (item) => item,
+    getChildren: () => {
+      const item = new vscode.TreeItem('프로파일러 열기', vscode.TreeItemCollapsibleState.None);
+      item.description = 'SQL Trace 수집 및 조회';
+      item.iconPath = new vscode.ThemeIcon('database');
+      item.command = { command: 'legacySqlTraceProfiler.open', title: '프로파일러 열기' };
+      return [item];
+    }
   }));
 }
 

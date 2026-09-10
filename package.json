@@ -1,8 +1,8 @@
 {
   "name": "legacy-sql-trace-profiler",
   "displayName": "Legacy SQL Trace Profiler",
-  "description": "SQL Server Legacy Trace profiler for VS Code on macOS.",
-  "version": "1.0.0",
+  "description": "Cross-platform SQL Server Legacy Trace profiler for VS Code.",
+  "version": "1.0.1",
   "publisher": "local",
   "private": true,
   "license": "UNLICENSED",
@@ -12,17 +12,47 @@
   "categories": ["Other"],
   "keywords": ["mssql", "sql server", "profiler", "trace"],
   "main": "./dist/extension.js",
-  "activationEvents": ["onCommand:legacySqlTraceProfiler.open"],
+  "activationEvents": [
+    "onCommand:legacySqlTraceProfiler.open",
+    "onView:legacySqlTraceProfiler.actions"
+  ],
   "contributes": {
     "commands": [
       {
         "command": "legacySqlTraceProfiler.open",
         "title": "Legacy SQL Trace Profiler: Open Profiler"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "legacySqlTraceProfiler",
+          "title": "SQL Trace Profiler",
+          "icon": "media/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "legacySqlTraceProfiler": [
+        {
+          "id": "legacySqlTraceProfiler.actions",
+          "name": "Profiler"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "legacySqlTraceProfiler.open",
+          "when": "view == legacySqlTraceProfiler.actions",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node scripts/build.js",
+    "watch": "node scripts/watch.js",
     "test": "node --test test/*.test.js",
     "package": "npm run build && node scripts/package-vsix.js"
   },
