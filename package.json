@@ -2,7 +2,7 @@
   "name": "legacy-sql-trace-profiler",
   "displayName": "Legacy SQL Trace Profiler",
   "description": "Cross-platform SQL Server Legacy Trace profiler for VS Code.",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "publisher": "local",
   "private": true,
   "license": "UNLICENSED",

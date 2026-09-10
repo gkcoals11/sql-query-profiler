@@ -45,7 +45,9 @@ function normalizeFilterPreset(preset) {
     filters: {
       eventIds: Array.isArray(filters.eventIds) ? filters.eventIds.map(Number).filter(Number.isInteger) : [],
       serverFilters: Array.isArray(filters.serverFilters) ? filters.serverFilters : [], textFilter: String(filters.textFilter || ''),
-      eventFilter: String(filters.eventFilter || ''), loginFilter: String(filters.loginFilter || '')
+      eventFilter: String(filters.eventFilter || ''), loginFilter: String(filters.loginFilter || ''),
+      databaseFilter: String(filters.databaseFilter || ''),
+      excludedStrings: Array.isArray(filters.excludedStrings) ? filters.excludedStrings.map(String).filter(Boolean) : []
     }
   };
 }

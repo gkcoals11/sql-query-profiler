@@ -57,7 +57,8 @@ class ProfilerPanel {
     this.trace = new LegacyTraceClient({
       onEvent: (event) => this.post({ type: 'traceEvent', event }),
       onStatus: (status, details) => this.post({ type: 'status', status, details }),
-      onError: (error) => this.reportError(error)
+      onError: (error) => this.reportError(error, true),
+      onExpired: ({ maxDurationMinutes }) => this.postSystemEvent('Profiler:Info', `설정한 ${maxDurationMinutes}분의 수집 시간이 끝나 프로파일링을 종료했습니다.`)
     });
     this.panel.webview.html = renderHtml(this.panel.webview, context.extensionUri);
     this.panel.webview.onDidReceiveMessage((message) => this.handleMessage(message), null, context.subscriptions);
@@ -108,7 +109,7 @@ class ProfilerPanel {
       this.post({ type: 'filterPresets', presets: this.filterPresets });
       this.post({ type: 'toast', message: '프로필 파일 변경사항을 반영했습니다.' });
     } catch (error) {
-      this.reportError(error);
+      this.reportError(error, ['start', 'pause', 'end'].includes(message.type));
     }
   }
 
@@ -161,6 +162,7 @@ class ProfilerPanel {
           break;
         case 'end':
           await this.trace.end();
+          this.postSystemEvent('Profiler:Info', '사용자 요청으로 프로파일링이 종료되었습니다.');
           break;
         case 'copy':
           await vscode.env.clipboard.writeText(String(message.text || ''));
@@ -243,7 +245,8 @@ class ProfilerPanel {
     if (!profile) throw new Error('사용할 연결 프로필을 선택하세요.');
     await this.trace.start(profile, {
       eventIds: message.eventIds,
-      serverFilters: message.serverFilters
+      serverFilters: message.serverFilters,
+      maxDurationMinutes: message.maxDurationMinutes
     });
   }
 
@@ -251,8 +254,13 @@ class ProfilerPanel {
     if (this.panel) this.panel.webview.postMessage(message);
   }
 
-  reportError(error) {
+  postSystemEvent(eventClass, textData) {
+    this.post({ type: 'traceEvent', event: { eventClass, textData, isSystem: true } });
+  }
+
+  reportError(error, includeEvent = false) {
     const message = error instanceof Error ? error.message : String(error);
+    if (includeEvent) this.postSystemEvent('Profiler:Error', `${message} 오류로 프로파일링이 종료되었습니다.`);
     this.post({ type: 'error', message });
     vscode.window.showErrorMessage(`Legacy SQL Trace Profiler: ${message}`);
   }
@@ -330,6 +338,7 @@ function renderHtml(webview, extensionUri) {
       <button id="saveFilterPreset" class="primary">저장</button>
       <button id="deleteFilterPreset" class="danger" disabled>삭제</button>
       <button id="resetFilters">필터 초기화</button>
+      <label class="duration-field">안전 자동 종료(분)<select id="maxTraceMinutes"><option>5</option><option>10</option><option>15</option><option>20</option><option>25</option><option selected>30</option></select></label>
     </div>
     <div class="settings-grid">
       <fieldset>
@@ -348,13 +357,18 @@ function renderHtml(webview, extensionUri) {
     <label>TextData 필터<input id="textFilter" placeholder="포함할 내용"></label>
     <label>EventClass 필터<input id="eventFilter" placeholder="예: RPC"></label>
     <label>LoginName 필터<input id="loginFilter" placeholder="예: cubeerp"></label>
+    <label>DatabaseName 필터<input id="databaseFilter" placeholder="예: SampleDb"></label>
     <span id="eventCount">0 / 0건</span>
+    <div class="exclude-area">
+      <label>제외 문자열<input id="excludeInput" placeholder="입력 후 Enter" autocomplete="off"></label>
+      <div id="excludeChips" class="exclude-chips" aria-label="제외 문자열 목록"></div>
+    </div>
   </section>
 
   <main class="workspace">
     <section class="grid-wrap">
       <table>
-        <thead><tr><th>#</th><th>EventClass</th><th>TextData</th><th>LoginName</th></tr></thead>
+        <thead><tr><th>#</th><th>EventClass</th><th>TextData</th><th>LoginName</th><th>DatabaseName</th></tr></thead>
         <tbody id="eventRows"></tbody>
       </table>
       <div id="emptyState" class="empty">프로필을 선택하고 시작을 누르세요.</div>

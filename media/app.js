@@ -2,7 +2,7 @@
 
 const vscode = acquireVsCodeApi();
 const $ = (id) => document.getElementById(id);
-const state = { profiles: [], filterPresets: [], events: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, status: 'idle', formatted: false };
+const state = { profiles: [], filterPresets: [], events: [], excludedStrings: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, status: 'idle', formatted: false };
 
 const eventDefinitions = [
   [10, 'RPC:Completed', true], [11, 'RPC:Starting', true],
@@ -85,6 +85,16 @@ function bindActions() {
   $('textFilter').addEventListener('input', renderEvents);
   $('eventFilter').addEventListener('input', renderEvents);
   $('loginFilter').addEventListener('input', renderEvents);
+  $('databaseFilter').addEventListener('input', renderEvents);
+  $('excludeInput').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const value = $('excludeInput').value.trim();
+    if (value && !state.excludedStrings.includes(value)) state.excludedStrings.push(value);
+    $('excludeInput').value = '';
+    renderExcludedStrings();
+    renderEvents();
+  });
   $('formatSql').addEventListener('click', () => {
     state.formatted = !state.formatted;
     $('formatSql').classList.toggle('active', state.formatted);
@@ -312,7 +322,9 @@ function collectFilterPreset() {
       serverFilters: collectServerFilters(),
       textFilter: $('textFilter').value,
       eventFilter: $('eventFilter').value,
-      loginFilter: $('loginFilter').value
+      loginFilter: $('loginFilter').value,
+      databaseFilter: $('databaseFilter').value,
+      excludedStrings: [...state.excludedStrings]
     }
   };
 }
@@ -352,6 +364,9 @@ function applySelectedFilterPreset() {
   $('textFilter').value = filters.textFilter || '';
   $('eventFilter').value = filters.eventFilter || '';
   $('loginFilter').value = filters.loginFilter || '';
+  $('databaseFilter').value = filters.databaseFilter || '';
+  state.excludedStrings = Array.isArray(filters.excludedStrings) ? [...filters.excludedStrings] : [];
+  renderExcludedStrings();
   renderEvents();
 }
 
@@ -364,7 +379,32 @@ function resetFilters() {
   $('textFilter').value = '';
   $('eventFilter').value = '';
   $('loginFilter').value = '';
+  $('databaseFilter').value = '';
+  state.excludedStrings = [];
+  renderExcludedStrings();
   renderEvents();
+}
+
+function renderExcludedStrings() {
+  const target = $('excludeChips');
+  target.replaceChildren();
+  for (const value of state.excludedStrings) {
+    const chip = document.createElement('span');
+    chip.className = 'exclude-chip';
+    const text = document.createElement('span');
+    text.textContent = value;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `${value} 제외 문자열 제거`);
+    remove.addEventListener('click', () => {
+      state.excludedStrings = state.excludedStrings.filter((item) => item !== value);
+      renderExcludedStrings();
+      renderEvents();
+    });
+    chip.append(text, remove);
+    target.append(chip);
+  }
 }
 
 function startTrace() {
@@ -383,7 +423,8 @@ function startTrace() {
     profileId: profile.id,
     profileScope: profile.scope,
     eventIds,
-    serverFilters: collectServerFilters()
+    serverFilters: collectServerFilters(),
+    maxDurationMinutes: Number($('maxTraceMinutes').value || 30)
   });
 }
 
@@ -412,10 +453,15 @@ function visibleEvents() {
   const text = $('textFilter').value.toLocaleLowerCase();
   const event = $('eventFilter').value.toLocaleLowerCase();
   const login = $('loginFilter').value.toLocaleLowerCase();
+  const database = $('databaseFilter').value.toLocaleLowerCase();
+  const excluded = state.excludedStrings.map((value) => value.toLocaleLowerCase());
   return state.events.filter((item) =>
+    item.isSystem || (
     (!text || String(item.textData || '').toLocaleLowerCase().includes(text)) &&
     (!event || String(item.eventClass || '').toLocaleLowerCase().includes(event)) &&
-    (!login || String(item.loginName || '').toLocaleLowerCase().includes(login))
+    (!login || String(item.loginName || '').toLocaleLowerCase().includes(login)) &&
+    (!database || String(item.databaseName || '').toLocaleLowerCase().includes(database)) &&
+    !excluded.some((value) => String(item.textData || '').toLocaleLowerCase().includes(value) || String(item.eventClass || '').toLocaleLowerCase().includes(value)))
   );
 }
 
@@ -425,8 +471,9 @@ function renderEvents() {
   const visible = visibleEvents();
   for (const event of visible) {
     const tr = document.createElement('tr');
+    if (event.isSystem) tr.classList.add('system-event');
     if (state.selectedRows.has(event.rowNumber)) tr.classList.add('selected');
-    const values = [event.rowNumber, event.eventClass, oneLine(event.textData), event.loginName || ''];
+    const values = [event.rowNumber, event.eventClass, oneLine(event.textData), event.loginName || '', event.databaseName || ''];
     values.forEach((value, index) => {
       const td = document.createElement('td');
       td.textContent = String(value == null ? '' : value);

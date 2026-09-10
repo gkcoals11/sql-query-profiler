@@ -19,15 +19,20 @@ const FILTER_COLUMNS = {
 };
 
 class LegacyTraceClient {
-  constructor({ onEvent, onStatus, onError }) {
+  constructor({ onEvent, onStatus, onError, onExpired }) {
     this.onEvent = onEvent;
     this.onStatus = onStatus;
     this.onError = onError;
+    this.onExpired = onExpired;
     this.state = 'idle';
     this.traceId = null;
     this.streamConnection = null;
     this.controlConnection = null;
     this.readerRequest = null;
+    this.expiryTimer = null;
+    this.expiresAtMs = null;
+    this.maxDurationMinutes = null;
+    this.expiring = false;
     this.parser = new TraceRowParser((event) => this.onEvent(event));
   }
 
@@ -43,7 +48,12 @@ class LegacyTraceClient {
       const config = buildConnectionConfig(profile, credentials);
       this.streamConnection = await connect(config);
       this.controlConnection = await connect(config);
-      this.traceId = await createTrace(this.streamConnection);
+      const maxDurationMinutes = normalizeMaxDuration(options.maxDurationMinutes);
+      this.maxDurationMinutes = maxDurationMinutes;
+      const expiresAt = new Date(Date.now() + maxDurationMinutes * 60 * 1000);
+      this.expiresAtMs = expiresAt.getTime();
+      const serverStopTime = await getServerStopTime(this.streamConnection, maxDurationMinutes);
+      this.traceId = await createTrace(this.streamConnection, serverStopTime);
       const eventIds = normalizeEventIds(options.eventIds);
       await configureEvents(this.streamConnection, this.traceId, eventIds, CAPTURE_COLUMNS);
       for (const filter of normalizeFilters(options.serverFilters)) {
@@ -51,7 +61,8 @@ class LegacyTraceClient {
       }
       await setTraceStatus(this.streamConnection, this.traceId, 1);
       this.state = 'running';
-      this.onStatus(this.state, { traceId: this.traceId });
+      this.onStatus(this.state, { traceId: this.traceId, expiresAt: expiresAt.toISOString() });
+      this.expiryTimer = setTimeout(() => this.expire(), Math.max(0, this.expiresAtMs - Date.now()));
       this.beginRead();
     } catch (error) {
       await this.cleanupAfterFailure();
@@ -75,6 +86,8 @@ class LegacyTraceClient {
   }
 
   async end() {
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
     if (!this.traceId) {
       this.state = 'ended';
       this.onStatus(this.state);
@@ -95,8 +108,24 @@ class LegacyTraceClient {
       closeConnection(this.controlConnection);
       this.streamConnection = null;
       this.controlConnection = null;
+      this.expiresAtMs = null;
+      this.maxDurationMinutes = null;
       this.state = 'ended';
       this.onStatus(this.state);
+    }
+  }
+
+  async expire() {
+    if (this.expiring || !['running', 'paused'].includes(this.state)) return;
+    const maxDurationMinutes = this.maxDurationMinutes || 30;
+    this.expiring = true;
+    try {
+      await this.end();
+      if (this.onExpired) this.onExpired({ maxDurationMinutes });
+    } catch (error) {
+      this.onError(error);
+    } finally {
+      this.expiring = false;
     }
   }
 
@@ -114,6 +143,10 @@ class LegacyTraceClient {
       if (this.readerRequest === request) this.readerRequest = null;
       this.parser.flush();
       if (error && this.state === 'running') {
+        if (this.expiresAtMs && Date.now() >= this.expiresAtMs - 5000) {
+          this.expire();
+          return;
+        }
         this.cleanupAfterFailure().finally(() => this.onError(error));
         return;
       }
@@ -131,6 +164,10 @@ class LegacyTraceClient {
   }
 
   async cleanupAfterFailure() {
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    this.expiresAtMs = null;
+    this.maxDurationMinutes = null;
     const traceId = this.traceId;
     if (traceId && this.controlConnection) {
       try { await setTraceStatus(this.controlConnection, traceId, 0); } catch (_) { /* ignored */ }
@@ -205,19 +242,33 @@ function callProcedure(connection, name, configure) {
   });
 }
 
-async function createTrace(connection) {
+async function createTrace(connection, stopTime) {
   const result = await callProcedure(connection, 'sp_trace_create', (request) => {
     request.addOutputParameter('traceid', TYPES.Int);
     request.addParameter('options', TYPES.Int, 1);
     request.addParameter('trace_file', TYPES.NVarChar, null);
     request.addParameter('maxfilesize', TYPES.BigInt, null);
-    request.addParameter('stoptime', TYPES.DateTime, null);
+    request.addParameter('stoptime', TYPES.DateTime, stopTime);
     request.addParameter('filecount', TYPES.Int, null);
   });
   if (result.returnStatus) throw new Error(`sp_trace_create 실패 (${result.returnStatus})`);
   const traceId = Number(result.output.traceid);
   if (!Number.isInteger(traceId) || traceId <= 0) throw new Error('SQL Server가 유효한 Trace ID를 반환하지 않았습니다.');
   return traceId;
+}
+
+function getServerStopTime(connection, minutes) {
+  return new Promise((resolve, reject) => {
+    let stopTime;
+    const request = new Request('SELECT DATEADD(minute, @minutes, GETDATE()) AS stopTime', (error) => {
+      if (error) reject(error);
+      else if (!(stopTime instanceof Date)) reject(new Error('SQL Server 안전 종료 시간을 확인하지 못했습니다.'));
+      else resolve(stopTime);
+    });
+    request.addParameter('minutes', TYPES.Int, minutes);
+    request.on('row', (columns) => { stopTime = columns[0] && columns[0].value; });
+    connection.execSql(request);
+  });
 }
 
 async function configureEvents(connection, traceId, eventIds, columnIds) {
@@ -260,6 +311,11 @@ function normalizeEventIds(eventIds) {
   return [...new Set(source.map(Number).filter((id) => Number.isInteger(id) && EVENT_NAMES[id]))];
 }
 
+function normalizeMaxDuration(value) {
+  const minutes = Number(value);
+  return Number.isInteger(minutes) && minutes >= 5 && minutes <= 30 && minutes % 5 === 0 ? minutes : 30;
+}
+
 function normalizeFilters(filters) {
   if (!Array.isArray(filters)) return [];
   return filters.filter((filter) => filter && FILTER_COLUMNS[filter.column] && String(filter.value ?? '') !== '')
@@ -281,6 +337,7 @@ module.exports = {
   buildConnectionConfig,
   normalizeEventIds,
   normalizeFilters,
+  normalizeMaxDuration,
   DEFAULT_EVENT_IDS,
   CAPTURE_COLUMNS,
   FILTER_COLUMNS
