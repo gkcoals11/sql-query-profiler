@@ -15,6 +15,7 @@ try {
   for (const file of ['package.json', 'README.md', 'CHANGELOG.md']) fs.copyFileSync(path.join(root, file), path.join(extensionDir, file));
   fs.cpSync(path.join(root, 'dist'), path.join(extensionDir, 'dist'), { recursive: true });
   fs.cpSync(path.join(root, 'media'), path.join(extensionDir, 'media'), { recursive: true });
+  fs.cpSync(path.join(root, 'data'), path.join(extensionDir, 'data'), { recursive: true });
   fs.writeFileSync(path.join(stage, '[Content_Types].xml'), contentTypes(), 'utf8');
   fs.writeFileSync(path.join(stage, 'extension.vsixmanifest'), vsixManifest(manifest), 'utf8');
   fs.mkdirSync(path.dirname(output), { recursive: true });

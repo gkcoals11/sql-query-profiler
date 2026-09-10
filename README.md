@@ -1,4 +1,4 @@
-# Legacy SQL Trace Profiler 1.0.1
+# Legacy SQL Trace Profiler 1.0.2
 
 Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로 확인하는 Extension입니다. Extended Events 권한 없이 `ALTER TRACE` 권한과 `sp_trace_*` 계열을 사용하며, 운영체제별 네이티브 실행 파일에 의존하지 않습니다.
 
@@ -9,17 +9,20 @@ Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로
 - 비밀번호를 포함한 프로필 JSON 가져오기·내보내기
 - RPC, SQL Batch, SQL Statement, Stored Procedure 이벤트의 Starting·Completed 선택
 - TextData, LoginName, DatabaseName, ApplicationName, HostName, SPID, Duration, Reads, Writes, CPU 서버 필터
+- 이벤트·서버·화면 필터를 함께 저장하고 적용하는 필터 프로필
+- 이벤트·서버·화면 필터 전체 초기화
 - 시작, 정지, 재개, 종료 및 종료 후 결과 유지
 - 행 번호, EventClass, TextData, LoginName 실시간 목록
 - 일반 클릭 단건 선택, Shift+클릭 범위 선택 및 선택된 SQL의 목록 순서 누적 표시·복사
 - 캡처 후 TextData, EventClass, LoginName 화면 필터
 - SQL 전문, 간단한 구문 강조, 보기용 줄바꿈 정리, 원문 복사
+- SQL 상세 영역 한정 Ctrl+A·Cmd+A 전체 선택 및 Ctrl+C·Cmd+C 복사
 - VS Code 좌측 Activity Bar의 SQL Trace Profiler 보기
 
 ## 설치 및 실행
 
 1. VS Code의 Extensions 화면에서 `...` → `Install from VSIX...`를 선택합니다.
-2. `legacy-sql-trace-profiler-1.0.1.vsix`를 선택합니다.
+2. `legacy-sql-trace-profiler-1.0.2.vsix`를 선택합니다.
 3. 좌측 Activity Bar의 데이터베이스 아이콘을 누르고 `프로파일러 열기`를 선택합니다. 명령 팔레트의 `Legacy SQL Trace Profiler: Open Profiler`도 사용할 수 있습니다.
 4. 연결 프로필을 저장하고 이벤트·필터를 선택한 뒤 시작합니다.
 
@@ -51,6 +54,8 @@ Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로
 
 사용자 요구사항에 따라 비밀번호는 JSON에 평문으로 저장되며 내보낸 파일에도 포함됩니다.
 
+공용 서버 프로필은 프로젝트의 `data/server-profiles.json`, 공용 필터 프로필은 `data/filter-profiles.json`에 저장되어 VSIX에 함께 포함됩니다. 사용자가 추가하는 개인 서버·필터 프로필은 VS Code의 Extension 전역 저장 디렉터리에 각각 `server-profiles.json`, `filter-profiles.json`으로 저장되며, 파일이 없으면 빈 프로필 JSON으로 자동 생성됩니다. 각 콤보박스 최상단의 파일 열기 항목으로 개인 JSON을 Finder 또는 Windows 탐색기에서 바로 확인할 수 있으며, 실행 중 파일을 외부에서 수정해도 목록에 자동 반영됩니다. 공용 프로필은 읽기 전용이며 수정해 저장하면 개인 프로필 사본이 생성됩니다.
+
 ## VSIX 빌드 및 배포
 
 Node.js 18 이상이 설치된 Windows 또는 macOS 터미널에서 다음 명령을 실행합니다.
@@ -62,7 +67,7 @@ npm run build
 npm run package
 ```
 
-완성된 `legacy-sql-trace-profiler-1.0.1.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 이 파일을 전달하고, 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다. Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
+완성된 `legacy-sql-trace-profiler-1.0.2.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 이 파일을 전달하고, 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다. Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
 
 ## 개발 중 바로 확인
 

@@ -2,7 +2,7 @@
 
 const vscode = acquireVsCodeApi();
 const $ = (id) => document.getElementById(id);
-const state = { profiles: [], events: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, status: 'idle', formatted: false };
+const state = { profiles: [], filterPresets: [], events: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, status: 'idle', formatted: false };
 
 const eventDefinitions = [
   [10, 'RPC:Completed', true], [11, 'RPC:Starting', true],
@@ -41,6 +41,12 @@ function bindActions() {
   $('importProfiles').addEventListener('click', () => vscode.postMessage({ type: 'importProfiles' }));
   $('exportProfiles').addEventListener('click', () => vscode.postMessage({ type: 'exportProfiles' }));
   $('profileSelect').addEventListener('change', () => {
+    if ($('profileSelect').value === '__open_storage__') {
+      vscode.postMessage({ type: 'openProfileStorage', profileType: 'server' });
+      $('profileSelect').value = $('profileSelect').dataset.lastValue || '';
+      return;
+    }
+    $('profileSelect').dataset.lastValue = $('profileSelect').value;
     $('editProfile').disabled = !selectedProfile();
   });
   $('start').addEventListener('click', startTrace);
@@ -48,6 +54,34 @@ function bindActions() {
   $('end').addEventListener('click', () => vscode.postMessage({ type: 'end' }));
   $('clear').addEventListener('click', clearEvents);
   $('addServerFilter').addEventListener('click', () => addServerFilterRow());
+  $('filterPresetSelect').addEventListener('change', () => {
+    if ($('filterPresetSelect').value === '__open_storage__') {
+      vscode.postMessage({ type: 'openProfileStorage', profileType: 'filter' });
+      $('filterPresetSelect').value = $('filterPresetSelect').dataset.lastValue || '';
+      return;
+    }
+    $('filterPresetSelect').dataset.lastValue = $('filterPresetSelect').value;
+    applySelectedFilterPreset();
+  });
+  $('newFilterPreset').addEventListener('click', () => {
+    $('filterPresetSelect').value = '';
+    $('filterPresetName').value = '';
+    $('deleteFilterPreset').disabled = true;
+    $('saveFilterPreset').textContent = '저장';
+    $('filterPresetSelect').dataset.lastValue = '';
+    $('filterPresetName').focus();
+  });
+  $('saveFilterPreset').addEventListener('click', saveFilterPreset);
+  $('deleteFilterPreset').addEventListener('click', deleteFilterPreset);
+  $('resetFilters').addEventListener('click', () => {
+    $('filterPresetSelect').value = '';
+    $('filterPresetName').value = '';
+    $('deleteFilterPreset').disabled = true;
+    $('saveFilterPreset').textContent = '저장';
+    $('filterPresetSelect').dataset.lastValue = '';
+    resetFilters();
+    showToast('필터를 초기화했습니다.', false);
+  });
   $('textFilter').addEventListener('input', renderEvents);
   $('eventFilter').addEventListener('input', renderEvents);
   $('loginFilter').addEventListener('input', renderEvents);
@@ -60,6 +94,25 @@ function bindActions() {
     const text = selectedEvents().map((event) => event.textData || '').filter(Boolean).join('\n\n');
     if (text) vscode.postMessage({ type: 'copy', text });
   });
+  $('sqlDetail').addEventListener('keydown', (event) => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    const key = event.key.toLocaleLowerCase();
+    if (key === 'a') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selectSqlDetailText();
+    } else if (key === 'c') {
+      const selectedText = selectedSqlDetailText();
+      if (selectedText) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        vscode.postMessage({ type: 'copy', text: selectedText });
+      }
+    }
+  }, true);
+  $('sqlDetail').addEventListener('beforeinput', (event) => event.preventDefault());
+  $('sqlDetail').addEventListener('paste', (event) => event.preventDefault());
+  $('sqlDetail').addEventListener('drop', (event) => event.preventDefault());
 }
 
 function renderEventOptions() {
@@ -79,6 +132,7 @@ function renderEventOptions() {
 function openProfileEditor(profile) {
   const value = profile || {};
   $('profileId').value = value.id || '';
+  $('profileScope').value = value.scope || 'custom';
   $('profileName').value = value.name || '';
   $('server').value = value.server || '';
   $('port').value = String(value.port || 1433);
@@ -90,7 +144,8 @@ function openProfileEditor(profile) {
   $('tracePassword').value = value.tracePassword || '';
   $('encrypt').checked = value.encrypt !== false;
   $('trustServerCertificate').checked = value.trustServerCertificate !== false;
-  $('deleteProfile').classList.toggle('hidden', !value.id);
+  $('deleteProfile').classList.toggle('hidden', !value.id || value.scope === 'shared');
+  $('saveProfile').textContent = value.scope === 'shared' ? '개인 사본 저장' : '저장';
   updateTraceCredentialsVisibility();
   $('profileEditor').classList.remove('hidden');
   $('profileName').focus();
@@ -107,6 +162,7 @@ function updateTraceCredentialsVisibility() {
 function saveProfile() {
   const profile = {
     id: $('profileId').value || undefined,
+    scope: $('profileScope').value || 'custom',
     name: $('profileName').value,
     server: $('server').value,
     port: Number($('port').value || 1433),
@@ -131,24 +187,35 @@ function deleteProfile() {
 
 function renderProfiles(selectedId) {
   const select = $('profileSelect');
-  const previous = selectedId || select.value;
+  const selectedAfterSave = selectedId && state.profiles.find((profile) => profile.id === selectedId && profile.scope === 'custom');
+  const previous = selectedAfterSave ? profileKey(selectedAfterSave) : select.value;
   select.replaceChildren();
+  const storage = document.createElement('option');
+  storage.value = '__open_storage__';
+  storage.textContent = '📂 개인 서버 프로필 파일 열기…';
+  select.append(storage);
   const placeholder = document.createElement('option');
   placeholder.value = '';
   placeholder.textContent = state.profiles.length ? '연결 프로필 선택' : '새 프로필을 만들어주세요';
+  placeholder.selected = true;
   select.append(placeholder);
   for (const profile of state.profiles) {
     const option = document.createElement('option');
-    option.value = profile.id;
-    option.textContent = `${profile.name} — ${profile.server}/${profile.database || 'master'}`;
+    option.value = profileKey(profile);
+    option.textContent = `${profile.scope === 'shared' ? '[공용]' : '[개인]'} ${profile.name} — ${profile.server}/${profile.database || 'master'}`;
     select.append(option);
   }
-  if (state.profiles.some((profile) => profile.id === previous)) select.value = previous;
+  if (state.profiles.some((profile) => profileKey(profile) === previous)) select.value = previous;
+  select.dataset.lastValue = select.value;
   $('editProfile').disabled = !selectedProfile();
 }
 
 function selectedProfile() {
-  return state.profiles.find((profile) => profile.id === $('profileSelect').value);
+  return state.profiles.find((profile) => profileKey(profile) === $('profileSelect').value);
+}
+
+function profileKey(profile) {
+  return `${profile.scope}:${profile.id}`;
 }
 
 function addServerFilterRow(initial) {
@@ -202,6 +269,104 @@ function collectServerFilters() {
   })).filter((filter) => filter.value !== '');
 }
 
+function renderFilterPresets(selectedId) {
+  const select = $('filterPresetSelect');
+  const selectedAfterSave = selectedId && state.filterPresets.find((preset) => preset.id === selectedId && preset.scope === 'custom');
+  const previous = selectedAfterSave ? profileKey(selectedAfterSave) : select.value;
+  select.replaceChildren();
+  const storage = document.createElement('option');
+  storage.value = '__open_storage__';
+  storage.textContent = '📂 개인 필터 프로필 파일 열기…';
+  select.append(storage);
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = state.filterPresets.length ? '필터 프로필 선택' : '저장된 필터 프로필 없음';
+  placeholder.selected = true;
+  select.append(placeholder);
+  for (const preset of state.filterPresets) {
+    const option = document.createElement('option');
+    option.value = profileKey(preset);
+    option.textContent = `${preset.scope === 'shared' ? '[공용]' : '[개인]'} ${preset.name}`;
+    select.append(option);
+  }
+  if (state.filterPresets.some((preset) => profileKey(preset) === previous)) select.value = previous;
+  select.dataset.lastValue = select.value;
+  const selected = selectedFilterPreset();
+  $('filterPresetName').value = selected ? selected.name : '';
+  $('deleteFilterPreset').disabled = !selected || selected.scope === 'shared';
+  $('saveFilterPreset').textContent = selected && selected.scope === 'shared' ? '개인 사본 저장' : '저장';
+}
+
+function selectedFilterPreset() {
+  return state.filterPresets.find((preset) => profileKey(preset) === $('filterPresetSelect').value);
+}
+
+function collectFilterPreset() {
+  const selected = selectedFilterPreset();
+  return {
+    id: selected ? selected.id : undefined,
+    scope: selected ? selected.scope : 'custom',
+    name: $('filterPresetName').value,
+    filters: {
+      eventIds: [...document.querySelectorAll('#eventOptions input:checked')].map((input) => Number(input.value)),
+      serverFilters: collectServerFilters(),
+      textFilter: $('textFilter').value,
+      eventFilter: $('eventFilter').value,
+      loginFilter: $('loginFilter').value
+    }
+  };
+}
+
+function saveFilterPreset() {
+  if (!$('filterPresetName').value.trim()) {
+    showToast('필터 프로필 이름을 입력하세요.', true);
+    return;
+  }
+  vscode.postMessage({ type: 'saveFilterPreset', preset: collectFilterPreset() });
+}
+
+function deleteFilterPreset() {
+  const preset = selectedFilterPreset();
+  if (preset) {
+    vscode.postMessage({ type: 'deleteFilterPreset', id: preset.id });
+    resetFilters();
+  }
+}
+
+function applySelectedFilterPreset() {
+  const preset = selectedFilterPreset();
+  $('deleteFilterPreset').disabled = !preset || preset.scope === 'shared';
+  $('saveFilterPreset').textContent = preset && preset.scope === 'shared' ? '개인 사본 저장' : '저장';
+  $('filterPresetName').value = preset ? preset.name : '';
+  if (!preset) {
+    resetFilters();
+    return;
+  }
+  const filters = preset.filters || {};
+  const eventIds = new Set(filters.eventIds || []);
+  for (const input of document.querySelectorAll('#eventOptions input')) {
+    input.checked = eventIds.has(Number(input.value));
+  }
+  $('serverFilters').replaceChildren();
+  for (const filter of filters.serverFilters || []) addServerFilterRow(filter);
+  $('textFilter').value = filters.textFilter || '';
+  $('eventFilter').value = filters.eventFilter || '';
+  $('loginFilter').value = filters.loginFilter || '';
+  renderEvents();
+}
+
+function resetFilters() {
+  const defaults = new Map(eventDefinitions.map(([id, , checked]) => [id, checked]));
+  for (const input of document.querySelectorAll('#eventOptions input')) {
+    input.checked = defaults.get(Number(input.value)) === true;
+  }
+  $('serverFilters').replaceChildren();
+  $('textFilter').value = '';
+  $('eventFilter').value = '';
+  $('loginFilter').value = '';
+  renderEvents();
+}
+
 function startTrace() {
   const profile = selectedProfile();
   if (!profile) {
@@ -216,6 +381,7 @@ function startTrace() {
   vscode.postMessage({
     type: 'start',
     profileId: profile.id,
+    profileScope: profile.scope,
     eventIds,
     serverFilters: collectServerFilters()
   });
@@ -291,6 +457,21 @@ function selectedEvents() {
   return state.events.filter((event) => state.selectedRows.has(event.rowNumber));
 }
 
+function selectSqlDetailText() {
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents($('sqlDetail').querySelector('code'));
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function selectedSqlDetailText() {
+  const selection = window.getSelection();
+  const detail = $('sqlDetail');
+  if (!selection || !selection.rangeCount || !detail.contains(selection.anchorNode) || !detail.contains(selection.focusNode)) return '';
+  return selection.toString();
+}
+
 function selectEvent(event, extendRange, visible) {
   const anchorIndex = visible.findIndex((item) => item.rowNumber === state.selectionAnchor);
   const targetIndex = visible.findIndex((item) => item.rowNumber === event.rowNumber);
@@ -359,6 +540,10 @@ window.addEventListener('message', ({ data }) => {
     case 'profiles':
       state.profiles = data.profiles || [];
       renderProfiles(data.selectedId);
+      break;
+    case 'filterPresets':
+      state.filterPresets = data.presets || [];
+      renderFilterPresets(data.selectedId);
       break;
     case 'traceEvent': appendEvent(data.event); break;
     case 'status': updateStatus(data.status, data.details); break;

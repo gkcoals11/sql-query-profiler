@@ -2,6 +2,7 @@
 
 const vscode = require('vscode');
 const { ProfileStore, normalizeProfile } = require('./profileStore');
+const { FilterPresetStore, normalizeFilterPreset } = require('./filterPresetStore');
 const { LegacyTraceClient } = require('./traceClient');
 
 let activePanel;
@@ -38,7 +39,11 @@ class ProfilerPanel {
   constructor(context) {
     this.context = context;
     this.store = new ProfileStore(context);
+    this.filterPresetStore = new FilterPresetStore(context);
     this.profiles = [];
+    this.filterPresets = [];
+    this.profileWatchers = [];
+    this.profileReloadTimer = null;
     this.panel = vscode.window.createWebviewPanel(
       'legacySqlTraceProfiler',
       'Legacy SQL Trace Profiler',
@@ -56,8 +61,10 @@ class ProfilerPanel {
     });
     this.panel.webview.html = renderHtml(this.panel.webview, context.extensionUri);
     this.panel.webview.onDidReceiveMessage((message) => this.handleMessage(message), null, context.subscriptions);
+    this.watchProfileFiles();
     this.panel.onDidDispose(() => {
       this.trace.dispose();
+      this.disposeProfileWatchers();
       activePanel = undefined;
     }, null, context.subscriptions);
   }
@@ -65,9 +72,51 @@ class ProfilerPanel {
   async initialize() {
     try {
       this.profiles = await this.store.load();
+      this.filterPresets = await this.filterPresetStore.load();
+      this.post({ type: 'profiles', profiles: this.profiles });
+      this.post({ type: 'filterPresets', presets: this.filterPresets });
     } catch (error) {
       this.reportError(error);
     }
+  }
+
+  watchProfileFiles() {
+    const targets = [
+      [this.context.extensionUri, 'data/server-profiles.json'],
+      [this.context.extensionUri, 'data/filter-profiles.json'],
+      [this.context.globalStorageUri, 'server-profiles.json'],
+      [this.context.globalStorageUri, 'filter-profiles.json']
+    ];
+    for (const [base, pattern] of targets) {
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(base, pattern));
+      const scheduleReload = () => {
+        clearTimeout(this.profileReloadTimer);
+        this.profileReloadTimer = setTimeout(() => this.reloadProfilesFromDisk(), 150);
+      };
+      watcher.onDidCreate(scheduleReload);
+      watcher.onDidChange(scheduleReload);
+      watcher.onDidDelete(scheduleReload);
+      this.profileWatchers.push(watcher);
+    }
+  }
+
+  async reloadProfilesFromDisk() {
+    try {
+      this.profiles = await this.store.load();
+      this.filterPresets = await this.filterPresetStore.load();
+      this.post({ type: 'profiles', profiles: this.profiles });
+      this.post({ type: 'filterPresets', presets: this.filterPresets });
+      this.post({ type: 'toast', message: '프로필 파일 변경사항을 반영했습니다.' });
+    } catch (error) {
+      this.reportError(error);
+    }
+  }
+
+  disposeProfileWatchers() {
+    clearTimeout(this.profileReloadTimer);
+    this.profileReloadTimer = null;
+    for (const watcher of this.profileWatchers) watcher.dispose();
+    this.profileWatchers = [];
   }
 
   reveal() {
@@ -79,6 +128,7 @@ class ProfilerPanel {
       switch (message.type) {
         case 'ready':
           this.post({ type: 'profiles', profiles: this.profiles });
+          this.post({ type: 'filterPresets', presets: this.filterPresets });
           this.post({ type: 'status', status: this.trace.state });
           break;
         case 'saveProfile':
@@ -92,6 +142,16 @@ class ProfilerPanel {
           break;
         case 'exportProfiles':
           await this.exportProfiles();
+          break;
+        case 'saveFilterPreset':
+          await this.saveFilterPreset(message.preset);
+          break;
+        case 'deleteFilterPreset':
+          await this.deleteFilterPreset(String(message.id));
+          break;
+        case 'openProfileStorage':
+          if (message.profileType === 'filter') await this.filterPresetStore.revealCustomFile();
+          else await this.store.revealCustomFile();
           break;
         case 'start':
           await this.startTrace(message);
@@ -115,24 +175,26 @@ class ProfilerPanel {
   }
 
   async saveProfile(input) {
-    const profile = normalizeProfile(input || {});
+    const sharedCopy = input && input.scope === 'shared';
+    const profile = normalizeProfile(sharedCopy ? { ...input, id: undefined } : (input || {}));
+    profile.scope = 'custom';
     if (!profile.name || !profile.server || !profile.user) {
       throw new Error('프로필 이름, 서버, 기본 계정은 필수입니다.');
     }
     if (profile.useTraceCredentials && !profile.traceUser) {
       throw new Error('Trace 전용 계정을 사용하려면 계정명을 입력하세요.');
     }
-    const index = this.profiles.findIndex((item) => item.id === profile.id);
+    const index = this.profiles.findIndex((item) => item.id === profile.id && item.scope === 'custom');
     if (index >= 0) this.profiles[index] = profile;
     else this.profiles.push(profile);
-    await this.store.save(this.profiles);
+    await this.store.saveCustom(this.profiles.filter((item) => item.scope === 'custom'));
     this.post({ type: 'profiles', profiles: this.profiles, selectedId: profile.id });
     this.post({ type: 'toast', message: '연결 프로필을 저장했습니다.' });
   }
 
   async deleteProfile(id) {
-    this.profiles = this.profiles.filter((profile) => profile.id !== id);
-    await this.store.save(this.profiles);
+    this.profiles = this.profiles.filter((profile) => profile.id !== id || profile.scope === 'shared');
+    await this.store.saveCustom(this.profiles.filter((profile) => profile.scope === 'custom'));
     this.post({ type: 'profiles', profiles: this.profiles });
   }
 
@@ -140,9 +202,13 @@ class ProfilerPanel {
     const imported = await this.store.importFromFile();
     if (!imported) return;
     const byId = new Map(this.profiles.map((profile) => [profile.id, profile]));
-    for (const profile of imported) byId.set(profile.id, profile);
+    for (const input of imported) {
+      const collidesWithShared = this.profiles.some((profile) => profile.id === input.id && profile.scope === 'shared');
+      const profile = { ...normalizeProfile(collidesWithShared ? { ...input, id: undefined } : input), scope: 'custom' };
+      byId.set(profile.id, profile);
+    }
     this.profiles = [...byId.values()];
-    await this.store.save(this.profiles);
+    await this.store.saveCustom(this.profiles.filter((profile) => profile.scope === 'custom'));
     this.post({ type: 'profiles', profiles: this.profiles });
     this.post({ type: 'toast', message: `${imported.length}개 프로필을 가져왔습니다.` });
   }
@@ -152,8 +218,28 @@ class ProfilerPanel {
     if (saved) this.post({ type: 'toast', message: '비밀번호를 포함한 프로필 JSON을 내보냈습니다.' });
   }
 
+  async saveFilterPreset(input) {
+    const sharedCopy = input && input.scope === 'shared';
+    const preset = normalizeFilterPreset(sharedCopy ? { ...input, id: undefined } : (input || {}));
+    preset.scope = 'custom';
+    if (!preset.name) throw new Error('필터 프로필 이름을 입력하세요.');
+    const index = this.filterPresets.findIndex((item) => item.id === preset.id && item.scope === 'custom');
+    if (index >= 0) this.filterPresets[index] = preset;
+    else this.filterPresets.push(preset);
+    await this.filterPresetStore.saveCustom(this.filterPresets.filter((item) => item.scope === 'custom'));
+    this.post({ type: 'filterPresets', presets: this.filterPresets, selectedId: preset.id });
+    this.post({ type: 'toast', message: sharedCopy ? '공용 필터 프로필을 개인 프로필로 복사했습니다.' : '필터 프로필을 저장했습니다.' });
+  }
+
+  async deleteFilterPreset(id) {
+    this.filterPresets = this.filterPresets.filter((preset) => preset.id !== id || preset.scope === 'shared');
+    await this.filterPresetStore.saveCustom(this.filterPresets.filter((preset) => preset.scope === 'custom'));
+    this.post({ type: 'filterPresets', presets: this.filterPresets });
+    this.post({ type: 'toast', message: '필터 프로필을 삭제했습니다.' });
+  }
+
   async startTrace(message) {
-    const profile = this.profiles.find((item) => item.id === message.profileId);
+    const profile = this.profiles.find((item) => item.id === message.profileId && item.scope === message.profileScope);
     if (!profile) throw new Error('사용할 연결 프로필을 선택하세요.');
     await this.trace.start(profile, {
       eventIds: message.eventIds,
@@ -172,6 +258,7 @@ class ProfilerPanel {
   }
 
   async dispose() {
+    this.disposeProfileWatchers();
     await this.trace.dispose();
     if (this.panel) this.panel.dispose();
   }
@@ -208,6 +295,7 @@ function renderHtml(webview, extensionUri) {
   <section id="profileEditor" class="card hidden" aria-label="연결 프로필 편집">
     <div class="section-title">연결 프로필</div>
     <input id="profileId" type="hidden">
+    <input id="profileScope" type="hidden">
     <div class="form-grid">
       <label>프로필 이름<input id="profileName" autocomplete="off"></label>
       <label>서버<input id="server" placeholder="server 또는 server\\instance" autocomplete="off"></label>
@@ -235,6 +323,14 @@ function renderHtml(webview, extensionUri) {
 
   <details class="card settings">
     <summary>이벤트 및 서버 필터</summary>
+    <div class="preset-toolbar">
+      <select id="filterPresetSelect" aria-label="필터 프로필"><option value="">필터 프로필 선택</option></select>
+      <input id="filterPresetName" placeholder="필터 프로필 이름" aria-label="필터 프로필 이름">
+      <button id="newFilterPreset">새 필터 프로필</button>
+      <button id="saveFilterPreset" class="primary">저장</button>
+      <button id="deleteFilterPreset" class="danger" disabled>삭제</button>
+      <button id="resetFilters">필터 초기화</button>
+    </div>
     <div class="settings-grid">
       <fieldset>
         <legend>수집 이벤트</legend>
@@ -269,7 +365,7 @@ function renderHtml(webview, extensionUri) {
         <button id="formatSql">줄바꿈 정리</button>
         <button id="copySql">SQL 복사</button>
       </div>
-      <pre id="sqlDetail"><code>선택한 이벤트의 SQL 전문이 여기에 표시됩니다.</code></pre>
+      <pre id="sqlDetail" tabindex="0" contenteditable="true" role="textbox" aria-readonly="true" aria-multiline="true" aria-label="선택된 이벤트의 SQL 상세" spellcheck="false"><code>선택한 이벤트의 SQL 전문이 여기에 표시됩니다.</code></pre>
     </section>
   </main>
   <div id="toast" role="status" aria-live="polite"></div>
