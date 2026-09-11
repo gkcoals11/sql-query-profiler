@@ -1,8 +1,17 @@
-# Legacy SQL Trace Profiler 1.0.4
+# Legacy SQL Trace Profiler 1.0.5
 
 Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로 확인하는 Extension입니다. Extended Events 권한 없이 `ALTER TRACE` 권한과 `sp_trace_*` 계열을 사용하며, 운영체제별 네이티브 실행 파일에 의존하지 않습니다.
 
 ## 버전 변경사항
+
+### 1.0.5
+
+- 대량 이벤트 배치 렌더링·가상 스크롤과 사용자 위치 기반 최신 이벤트 자동 추적
+- 필터로 숨겨진 이벤트의 불필요한 목록 렌더링 생략
+- 기본 컬럼을 유지하는 사용자 선택형 추가 Trace 컬럼
+- Trace 생성 없는 연결·DB·버전·ALTER TRACE 권한 테스트
+- 이벤트 목록 위 실행 제어 버튼·상태 배치와 전체 UI 확대
+- 서버 프로필 변경 시 기존 수집 이벤트와 SQL 상세 초기화
 
 ### 1.0.4
 
@@ -29,6 +38,7 @@ Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로
 ## V1 기능
 
 - 여러 SQL Server 연결 프로필 저장, 선택, 수정, 삭제
+- Trace를 생성하지 않는 연결·DB·버전·ALTER TRACE 권한 테스트
 - 기본 DB 로그인 및 선택적인 Trace 전용 로그인
 - 비밀번호를 포함한 프로필 JSON 가져오기·내보내기
 - RPC, SQL Batch, SQL Statement, Stored Procedure 이벤트의 Starting·Completed 선택
@@ -36,11 +46,14 @@ Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로
 - 이벤트·서버·화면 필터를 함께 저장하고 적용하는 필터 프로필
 - 이벤트·서버·화면 필터 전체 초기화
 - 시작, 정지, 재개, 종료 및 종료 후 결과 유지
-- 5분 단위·최대 30분 서버 측 안전 만료와 정상 실행 중 만료 시 Trace 자동 삭제
+- 기본 5분, 5분 단위·최대 30분 서버 측 안전 만료와 정상 실행 중 만료 시 Trace 자동 삭제
 - 행 번호, EventClass, TextData, LoginName 실시간 목록
+- 150ms 이벤트 묶음 갱신과 가상 스크롤 기반 대량 목록 렌더링
+- 목록 하단에서는 최신 이벤트 자동 추적, 위로 스크롤하면 자동 추적 일시 해제
 - 일반 클릭 단건 선택, Shift+클릭 범위 선택 및 선택된 SQL의 목록 순서 누적 표시·복사
 - 캡처 후 TextData, EventClass, LoginName 화면 필터
 - 목록 마지막 DatabaseName 컬럼과 DatabaseName 화면 필터
+- 사용자별 선택 상태를 유지하는 추가 Trace 컬럼 표시
 - EventClass·TextData에 적용되는 다중 제외 문자열 태그 필터
 - SQL 전문, 간단한 구문 강조, 보기용 줄바꿈 정리, 원문 복사
 - SQL 상세 영역 한정 Ctrl+A·Cmd+A 전체 선택 및 Ctrl+C·Cmd+C 복사
@@ -49,7 +62,7 @@ Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로
 ## 설치 및 실행
 
 1. VS Code의 Extensions 화면에서 `...` → `Install from VSIX...`를 선택합니다.
-2. `legacy-sql-trace-profiler-1.0.4.vsix`를 선택합니다.
+2. `legacy-sql-trace-profiler-1.0.5.vsix`를 선택합니다.
 3. 좌측 Activity Bar의 데이터베이스 아이콘을 누르고 `프로파일러 열기`를 선택합니다. 명령 팔레트의 `Legacy SQL Trace Profiler: Open Profiler`도 사용할 수 있습니다.
 4. 연결 프로필을 저장하고 이벤트·필터를 선택한 뒤 시작합니다.
 
@@ -94,7 +107,7 @@ npm run build
 npm run package
 ```
 
-완성된 `legacy-sql-trace-profiler-1.0.4.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 이 파일을 전달하고, 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다. Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
+완성된 `legacy-sql-trace-profiler-1.0.5.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 이 파일을 전달하고, 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다. Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
 
 ## 개발 중 바로 확인
 

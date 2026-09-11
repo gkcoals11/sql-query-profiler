@@ -3,7 +3,7 @@
 const vscode = require('vscode');
 const { ProfileStore, normalizeProfile } = require('./profileStore');
 const { FilterPresetStore, normalizeFilterPreset } = require('./filterPresetStore');
-const { LegacyTraceClient } = require('./traceClient');
+const { LegacyTraceClient, testProfileConnection } = require('./traceClient');
 
 let activePanel;
 
@@ -42,6 +42,7 @@ class ProfilerPanel {
     this.filterPresetStore = new FilterPresetStore(context);
     this.profiles = [];
     this.filterPresets = [];
+    this.columnPreferences = context.globalState.get('visibleOptionalColumns', []);
     this.profileWatchers = [];
     this.profileReloadTimer = null;
     this.panel = vscode.window.createWebviewPanel(
@@ -109,7 +110,7 @@ class ProfilerPanel {
       this.post({ type: 'filterPresets', presets: this.filterPresets });
       this.post({ type: 'toast', message: '프로필 파일 변경사항을 반영했습니다.' });
     } catch (error) {
-      this.reportError(error, ['start', 'pause', 'end'].includes(message.type));
+      this.reportError(error);
     }
   }
 
@@ -130,10 +131,14 @@ class ProfilerPanel {
         case 'ready':
           this.post({ type: 'profiles', profiles: this.profiles });
           this.post({ type: 'filterPresets', presets: this.filterPresets });
+          this.post({ type: 'columnPreferences', columns: this.columnPreferences });
           this.post({ type: 'status', status: this.trace.state });
           break;
         case 'saveProfile':
           await this.saveProfile(message.profile);
+          break;
+        case 'testConnection':
+          await this.testConnection(message.profile);
           break;
         case 'deleteProfile':
           await this.deleteProfile(String(message.id));
@@ -154,6 +159,10 @@ class ProfilerPanel {
           if (message.profileType === 'filter') await this.filterPresetStore.revealCustomFile();
           else await this.store.revealCustomFile();
           break;
+        case 'saveColumnPreferences':
+          this.columnPreferences = Array.isArray(message.columns) ? message.columns.map(String) : [];
+          await this.context.globalState.update('visibleOptionalColumns', this.columnPreferences);
+          break;
         case 'start':
           await this.startTrace(message);
           break;
@@ -172,7 +181,12 @@ class ProfilerPanel {
           break;
       }
     } catch (error) {
-      this.reportError(error);
+      if (message.type === 'testConnection') {
+        const text = error instanceof Error ? error.message : String(error);
+        this.post({ type: 'connectionTestError', message: text });
+      } else {
+        this.reportError(error, ['start', 'pause', 'end'].includes(message.type));
+      }
     }
   }
 
@@ -192,6 +206,14 @@ class ProfilerPanel {
     await this.store.saveCustom(this.profiles.filter((item) => item.scope === 'custom'));
     this.post({ type: 'profiles', profiles: this.profiles, selectedId: profile.id });
     this.post({ type: 'toast', message: '연결 프로필을 저장했습니다.' });
+  }
+
+  async testConnection(input) {
+    const profile = normalizeProfile(input || {});
+    if (!profile.server || !profile.user) throw new Error('서버와 기본 계정을 입력하세요.');
+    if (profile.useTraceCredentials && !profile.traceUser) throw new Error('Trace 전용 계정명을 입력하세요.');
+    const info = await testProfileConnection(profile);
+    this.post({ type: 'connectionTestResult', info });
   }
 
   async deleteProfile(id) {
@@ -292,12 +314,6 @@ function renderHtml(webview, extensionUri) {
     <button id="editProfile">편집</button>
     <button id="importProfiles">가져오기</button>
     <button id="exportProfiles">내보내기</button>
-    <span class="spacer"></span>
-    <button id="start" class="primary">▶ 시작</button>
-    <button id="pause">Ⅱ 정지</button>
-    <button id="end">■ 종료</button>
-    <button id="clear">결과 지우기</button>
-    <span id="status" class="status idle">대기</span>
   </header>
 
   <section id="profileEditor" class="card hidden" aria-label="연결 프로필 편집">
@@ -322,10 +338,12 @@ function renderHtml(webview, extensionUri) {
       <label class="inline"><input id="trustServerCertificate" type="checkbox" checked> 서버 인증서 신뢰</label>
     </div>
     <div class="actions">
+      <button id="testConnection">연결 테스트</button>
       <button id="saveProfile" class="primary">저장</button>
       <button id="deleteProfile" class="danger">삭제</button>
       <button id="cancelProfile">닫기</button>
     </div>
+    <p id="connectionTestResult" class="connection-test hidden" role="status"></p>
     <p class="hint">비밀번호는 요청한 사양에 따라 프로필 JSON에 평문으로 저장되며 내보내기 파일에도 포함됩니다.</p>
   </section>
 
@@ -338,7 +356,7 @@ function renderHtml(webview, extensionUri) {
       <button id="saveFilterPreset" class="primary">저장</button>
       <button id="deleteFilterPreset" class="danger" disabled>삭제</button>
       <button id="resetFilters">필터 초기화</button>
-      <label class="duration-field">안전 자동 종료(분)<select id="maxTraceMinutes"><option>5</option><option>10</option><option>15</option><option>20</option><option>25</option><option selected>30</option></select></label>
+      <label class="duration-field">안전 자동 종료(분)<select id="maxTraceMinutes"><option selected>5</option><option>10</option><option>15</option><option>20</option><option>25</option><option>30</option></select></label>
     </div>
     <div class="settings-grid">
       <fieldset>
@@ -359,16 +377,28 @@ function renderHtml(webview, extensionUri) {
     <label>LoginName 필터<input id="loginFilter" placeholder="예: cubeerp"></label>
     <label>DatabaseName 필터<input id="databaseFilter" placeholder="예: SampleDb"></label>
     <span id="eventCount">0 / 0건</span>
+    <details class="column-picker">
+      <summary>표시 컬럼</summary>
+      <div id="columnOptions" class="column-options"></div>
+    </details>
     <div class="exclude-area">
       <label>제외 문자열<input id="excludeInput" placeholder="입력 후 Enter" autocomplete="off"></label>
       <div id="excludeChips" class="exclude-chips" aria-label="제외 문자열 목록"></div>
     </div>
   </section>
 
+  <section class="trace-toolbar" aria-label="프로파일러 실행 제어">
+    <button id="start" class="primary">▶ 시작</button>
+    <button id="pause">Ⅱ 정지</button>
+    <button id="end">■ 종료</button>
+    <button id="clear">결과 지우기</button>
+    <span id="status" class="status idle">대기</span>
+  </section>
+
   <main class="workspace">
-    <section class="grid-wrap">
+    <section id="gridWrap" class="grid-wrap">
       <table>
-        <thead><tr><th>#</th><th>EventClass</th><th>TextData</th><th>LoginName</th><th>DatabaseName</th></tr></thead>
+        <thead><tr id="eventHeader"></tr></thead>
         <tbody id="eventRows"></tbody>
       </table>
       <div id="emptyState" class="empty">프로필을 선택하고 시작을 누르세요.</div>

@@ -31,8 +31,8 @@ test('normalizes trace safety duration', () => {
   assert.equal(normalizeMaxDuration(15), 15);
   assert.equal(normalizeMaxDuration(5), 5);
   assert.equal(normalizeMaxDuration(30), 30);
-  assert.equal(normalizeMaxDuration(7), 30);
-  assert.equal(normalizeMaxDuration(0), 30);
-  assert.equal(normalizeMaxDuration(35), 30);
-  assert.equal(normalizeMaxDuration('invalid'), 30);
+  assert.equal(normalizeMaxDuration(7), 5);
+  assert.equal(normalizeMaxDuration(0), 5);
+  assert.equal(normalizeMaxDuration(35), 5);
+  assert.equal(normalizeMaxDuration('invalid'), 5);
 });

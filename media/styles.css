@@ -2,19 +2,19 @@
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  padding: 12px;
+  padding: 14px;
   color: var(--vscode-foreground);
   background: var(--vscode-editor-background);
   font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
+  font-size: calc(var(--vscode-font-size) + 2px);
 }
 button, input, select {
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, transparent);
   border-radius: 2px;
-  min-height: 28px;
-  padding: 4px 8px;
+  min-height: 30px;
+  padding: 5px 10px;
 }
 button { cursor: pointer; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
 button:hover { background: var(--vscode-button-secondaryHoverBackground); }
@@ -25,19 +25,24 @@ button:disabled { opacity: .45; cursor: default; }
 input:focus, select:focus, button:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 .toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
 .toolbar #profileSelect { min-width: 260px; }
-.spacer { flex: 1; }
+.trace-toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+.trace-toolbar button { min-height: 40px; padding: 8px 18px; font-size: 16px; font-weight: 600; }
+.trace-toolbar .status { margin-left: auto; padding: 7px 14px; font-size: 15px; }
 .status { border-radius: 12px; padding: 4px 9px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
 .status.running { background: var(--vscode-testing-iconPassed); color: var(--vscode-editor-background); }
 .status.paused { background: var(--vscode-editorWarning-foreground); color: var(--vscode-editor-background); }
 .status.error { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
-.card { border: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); padding: 10px; margin-bottom: 10px; }
+.card { border: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); padding: 12px; margin-bottom: 10px; }
 .section-title { font-weight: 600; margin-bottom: 8px; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 8px; }
 label { display: flex; flex-direction: column; gap: 4px; }
 label.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 3px; }
 label.inline input { min-height: auto; }
 .options, .actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
-.hint { margin: 8px 0 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.hint { margin: 8px 0 0; color: var(--vscode-descriptionForeground); font-size: 14px; }
+.connection-test { margin: 8px 0 0; padding: 7px 9px; border-left: 3px solid var(--vscode-focusBorder); background: var(--vscode-textBlockQuote-background); }
+.connection-test.success { border-left-color: var(--vscode-testing-iconPassed); }
+.connection-test.warning { border-left-color: var(--vscode-editorWarning-foreground); }
 .settings summary { cursor: pointer; font-weight: 600; }
 .preset-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .preset-toolbar select, .preset-toolbar input { min-width: 180px; }
@@ -48,6 +53,9 @@ fieldset { border: 1px solid var(--vscode-panel-border); }
 .checkbox-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .filter-row { display: grid; grid-template-columns: 1fr .8fr 1.2fr .6fr auto; gap: 5px; margin-bottom: 5px; }
 .screen-filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 8px; align-items: end; }
+.column-picker { grid-column: 1 / -1; }
+.column-picker summary { cursor: pointer; width: fit-content; font-weight: 600; }
+.column-options { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px; padding: 8px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
 .exclude-area { grid-column: 1 / -1; display: flex; align-items: end; gap: 8px; }
 .exclude-area label { min-width: 240px; }
 .exclude-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 28px; }
@@ -56,11 +64,13 @@ fieldset { border: 1px solid var(--vscode-panel-border); }
 .exclude-chip button { min-height: 20px; height: 20px; padding: 0 5px; border: 0; border-radius: 10px; }
 #eventCount { padding: 6px 0; color: var(--vscode-descriptionForeground); }
 .workspace { display: grid; grid-template-rows: minmax(260px, 48vh) minmax(180px, 1fr); border: 1px solid var(--vscode-panel-border); }
-.grid-wrap { position: relative; overflow: auto; }
+.grid-wrap { position: relative; overflow: auto; overflow-anchor: none; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 th { position: sticky; top: 0; z-index: 2; text-align: left; background: var(--vscode-editorGroupHeader-tabsBackground); border-bottom: 1px solid var(--vscode-panel-border); padding: 6px; }
-th:nth-child(1) { width: 60px; } th:nth-child(2) { width: 190px; } th:nth-child(4), th:nth-child(5) { width: 170px; }
 td { border-bottom: 1px solid var(--vscode-panel-border); padding: 5px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+tbody tr:not(.virtual-spacer) { height: 31px; }
+.virtual-spacer, .virtual-spacer:hover { cursor: default; background: transparent; }
+.virtual-spacer td { padding: 0; border: 0; }
 tr { cursor: pointer; }
 tr:hover { background: var(--vscode-list-hoverBackground); }
 tr.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
@@ -70,7 +80,7 @@ tr.system-event { color: var(--vscode-descriptionForeground); font-style: italic
 .detail-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px; border-bottom: 1px solid var(--vscode-panel-border); }
 .detail-toolbar strong { margin-right: auto; }
 .detail-toolbar button.active { outline: 1px solid var(--vscode-focusBorder); }
-#sqlDetail { margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; flex: 1; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
+#sqlDetail { margin: 0; padding: 12px; overflow: auto; white-space: pre-wrap; flex: 1; font-family: var(--vscode-editor-font-family); font-size: calc(var(--vscode-editor-font-size) + 2px); }
 #sqlDetail:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .sql-keyword { color: var(--vscode-symbolIcon-keywordForeground, #c586c0); font-weight: 600; }
 .sql-string { color: var(--vscode-symbolIcon-stringForeground, #ce9178); }
@@ -82,8 +92,9 @@ tr.system-event { color: var(--vscode-descriptionForeground); font-style: italic
 .hidden { display: none !important; }
 @media (max-width: 900px) {
   .toolbar { flex-wrap: wrap; }
+  .trace-toolbar { flex-wrap: wrap; }
   .preset-toolbar { flex-wrap: wrap; }
-  .spacer { display: none; }
+  .trace-toolbar .status { margin-left: 0; }
   .form-grid, .settings-grid { grid-template-columns: 1fr; }
   .screen-filters { grid-template-columns: 1fr 1fr; }
 }

@@ -2,7 +2,34 @@
 
 const vscode = acquireVsCodeApi();
 const $ = (id) => document.getElementById(id);
-const state = { profiles: [], filterPresets: [], events: [], excludedStrings: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, status: 'idle', formatted: false };
+const state = { profiles: [], filterPresets: [], events: [], visibleEvents: [], visibleOptionalColumns: new Set(), excludedStrings: [], selectedRows: new Set(), selectionAnchor: null, nextRowNumber: 1, eventRenderTimer: null, eventCountTimer: null, scrollRenderFrame: null, followTail: true, lastScrollTop: 0, status: 'idle', formatted: false };
+const EVENT_ROW_HEIGHT = 31;
+const EVENT_RENDER_DELAY = 150;
+const EVENT_OVERSCAN = 12;
+
+const eventColumns = [
+  { key: 'rowNumber', label: '#', width: 60, fixed: true },
+  { key: 'eventClass', label: 'EventClass', width: 190, fixed: true },
+  { key: 'textData', label: 'TextData', width: 520, fixed: true, oneLine: true },
+  { key: 'loginName', label: 'LoginName', width: 170, fixed: true },
+  { key: 'databaseName', label: 'DatabaseName', width: 170, fixed: true },
+  { key: 'duration', label: 'Duration (µs)', width: 130 },
+  { key: 'cpu', label: 'CPU (ms)', width: 100 },
+  { key: 'reads', label: 'Reads', width: 100 },
+  { key: 'writes', label: 'Writes', width: 100 },
+  { key: 'rowCounts', label: 'RowCounts', width: 110 },
+  { key: 'spid', label: 'SPID', width: 80 },
+  { key: 'hostName', label: 'HostName', width: 150 },
+  { key: 'applicationName', label: 'ApplicationName', width: 180 },
+  { key: 'sessionLoginName', label: 'SessionLoginName', width: 170 },
+  { key: 'objectName', label: 'ObjectName', width: 160 },
+  { key: 'startTime', label: 'StartTime', width: 190 },
+  { key: 'endTime', label: 'EndTime', width: 190 },
+  { key: 'eventSequence', label: 'EventSequence', width: 130 },
+  { key: 'databaseId', label: 'DatabaseID', width: 100 },
+  { key: 'objectId', label: 'ObjectID', width: 100 },
+  { key: 'clientProcessId', label: 'ClientProcessID', width: 130 }
+];
 
 const eventDefinitions = [
   [10, 'RPC:Completed', true], [11, 'RPC:Starting', true],
@@ -23,9 +50,49 @@ const filterColumns = [
 
 function initialize() {
   renderEventOptions();
+  renderColumnOptions();
+  renderEventHeader();
   bindActions();
   updateStatus('idle');
   vscode.postMessage({ type: 'ready' });
+}
+
+function visibleColumns() {
+  return eventColumns.filter((column) => column.fixed || state.visibleOptionalColumns.has(column.key));
+}
+
+function renderColumnOptions() {
+  const target = $('columnOptions');
+  target.replaceChildren();
+  for (const column of eventColumns.filter((item) => !item.fixed)) {
+    const label = document.createElement('label');
+    label.className = 'inline';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = state.visibleOptionalColumns.has(column.key);
+    input.addEventListener('change', () => {
+      if (input.checked) state.visibleOptionalColumns.add(column.key);
+      else state.visibleOptionalColumns.delete(column.key);
+      renderEventHeader();
+      renderEvents(false);
+      vscode.postMessage({ type: 'saveColumnPreferences', columns: [...state.visibleOptionalColumns] });
+    });
+    label.append(input, document.createTextNode(` ${column.label}`));
+    target.append(label);
+  }
+}
+
+function renderEventHeader() {
+  const header = $('eventHeader');
+  header.replaceChildren();
+  const columns = visibleColumns();
+  for (const column of columns) {
+    const th = document.createElement('th');
+    th.textContent = column.label;
+    if (column.width) th.style.width = `${column.width}px`;
+    header.append(th);
+  }
+  header.closest('table').style.minWidth = `${columns.reduce((total, column) => total + (column.width || 120), 0)}px`;
 }
 
 function bindActions() {
@@ -37,6 +104,7 @@ function bindActions() {
   $('cancelProfile').addEventListener('click', closeProfileEditor);
   $('useTraceCredentials').addEventListener('change', updateTraceCredentialsVisibility);
   $('saveProfile').addEventListener('click', saveProfile);
+  $('testConnection').addEventListener('click', testConnection);
   $('deleteProfile').addEventListener('click', deleteProfile);
   $('importProfiles').addEventListener('click', () => vscode.postMessage({ type: 'importProfiles' }));
   $('exportProfiles').addEventListener('click', () => vscode.postMessage({ type: 'exportProfiles' }));
@@ -46,6 +114,7 @@ function bindActions() {
       $('profileSelect').value = $('profileSelect').dataset.lastValue || '';
       return;
     }
+    clearEvents();
     $('profileSelect').dataset.lastValue = $('profileSelect').value;
     $('editProfile').disabled = !selectedProfile();
   });
@@ -86,6 +155,18 @@ function bindActions() {
   $('eventFilter').addEventListener('input', renderEvents);
   $('loginFilter').addEventListener('input', renderEvents);
   $('databaseFilter').addEventListener('input', renderEvents);
+  $('gridWrap').addEventListener('scroll', () => {
+    const currentScrollTop = $('gridWrap').scrollTop;
+    if (currentScrollTop < state.lastScrollTop - 1) state.followTail = false;
+    else if (isEventGridAtBottom()) state.followTail = true;
+    state.lastScrollTop = currentScrollTop;
+    if (state.scrollRenderFrame) return;
+    state.scrollRenderFrame = window.requestAnimationFrame(() => {
+      state.scrollRenderFrame = null;
+      renderEvents(false);
+    });
+  });
+  window.addEventListener('resize', () => renderEvents(false));
   $('excludeInput').addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
@@ -141,6 +222,8 @@ function renderEventOptions() {
 
 function openProfileEditor(profile) {
   const value = profile || {};
+  $('connectionTestResult').className = 'connection-test hidden';
+  $('testConnection').disabled = false;
   $('profileId').value = value.id || '';
   $('profileScope').value = value.scope || 'custom';
   $('profileName').value = value.name || '';
@@ -170,7 +253,13 @@ function updateTraceCredentialsVisibility() {
 }
 
 function saveProfile() {
-  const profile = {
+  const profile = collectProfileForm();
+  vscode.postMessage({ type: 'saveProfile', profile });
+  closeProfileEditor();
+}
+
+function collectProfileForm() {
+  return {
     id: $('profileId').value || undefined,
     scope: $('profileScope').value || 'custom',
     name: $('profileName').value,
@@ -185,8 +274,14 @@ function saveProfile() {
     encrypt: $('encrypt').checked,
     trustServerCertificate: $('trustServerCertificate').checked
   };
-  vscode.postMessage({ type: 'saveProfile', profile });
-  closeProfileEditor();
+}
+
+function testConnection() {
+  const result = $('connectionTestResult');
+  $('testConnection').disabled = true;
+  result.textContent = '연결 확인 중…';
+  result.className = 'connection-test pending';
+  vscode.postMessage({ type: 'testConnection', profile: collectProfileForm() });
 }
 
 function deleteProfile() {
@@ -424,7 +519,7 @@ function startTrace() {
     profileScope: profile.scope,
     eventIds,
     serverFilters: collectServerFilters(),
-    maxDurationMinutes: Number($('maxTraceMinutes').value || 30)
+    maxDurationMinutes: Number($('maxTraceMinutes').value || 5)
   });
 }
 
@@ -432,59 +527,121 @@ function appendEvent(event) {
   event.rowNumber = state.nextRowNumber;
   state.nextRowNumber += 1;
   state.events.push(event);
+  const eventIsVisible = eventMatchesFilters(event);
+  let removedWasVisible = false;
   if (state.events.length > 10000) {
     const removed = state.events.shift();
+    removedWasVisible = state.visibleEvents.some((item) => item.rowNumber === removed.rowNumber);
     state.selectedRows.delete(removed.rowNumber);
     if (state.selectionAnchor === removed.rowNumber) state.selectionAnchor = null;
   }
-  renderEvents();
+  if (eventIsVisible || removedWasVisible) scheduleEventRender();
+  else scheduleEventCountUpdate();
+}
+
+function scheduleEventRender() {
+  if (state.eventRenderTimer) return;
+  state.eventRenderTimer = window.setTimeout(() => {
+    state.eventRenderTimer = null;
+    renderEvents();
+  }, EVENT_RENDER_DELAY);
+}
+
+function scheduleEventCountUpdate() {
+  if (state.eventCountTimer) return;
+  state.eventCountTimer = window.setTimeout(() => {
+    state.eventCountTimer = null;
+    updateEventCount();
+  }, EVENT_RENDER_DELAY);
 }
 
 function clearEvents() {
+  window.clearTimeout(state.eventRenderTimer);
+  window.clearTimeout(state.eventCountTimer);
+  state.eventRenderTimer = null;
+  state.eventCountTimer = null;
   state.events = [];
   state.selectedRows.clear();
   state.selectionAnchor = null;
   state.nextRowNumber = 1;
+  state.followTail = true;
+  state.lastScrollTop = 0;
   renderEvents();
   renderSqlDetail();
 }
 
 function visibleEvents() {
+  return state.events.filter(eventMatchesFilters);
+}
+
+function eventMatchesFilters(item) {
+  if (item.isSystem) return true;
   const text = $('textFilter').value.toLocaleLowerCase();
   const event = $('eventFilter').value.toLocaleLowerCase();
   const login = $('loginFilter').value.toLocaleLowerCase();
   const database = $('databaseFilter').value.toLocaleLowerCase();
   const excluded = state.excludedStrings.map((value) => value.toLocaleLowerCase());
-  return state.events.filter((item) =>
-    item.isSystem || (
-    (!text || String(item.textData || '').toLocaleLowerCase().includes(text)) &&
+  return (!text || String(item.textData || '').toLocaleLowerCase().includes(text)) &&
     (!event || String(item.eventClass || '').toLocaleLowerCase().includes(event)) &&
     (!login || String(item.loginName || '').toLocaleLowerCase().includes(login)) &&
     (!database || String(item.databaseName || '').toLocaleLowerCase().includes(database)) &&
-    !excluded.some((value) => String(item.textData || '').toLocaleLowerCase().includes(value) || String(item.eventClass || '').toLocaleLowerCase().includes(value)))
-  );
+    !excluded.some((value) => String(item.textData || '').toLocaleLowerCase().includes(value) || String(item.eventClass || '').toLocaleLowerCase().includes(value));
 }
 
-function renderEvents() {
+function renderEvents(recompute = true) {
   const rows = $('eventRows');
+  const viewport = $('gridWrap');
+  const scrollTop = viewport.scrollTop;
+  const scrollLeft = viewport.scrollLeft;
   rows.replaceChildren();
-  const visible = visibleEvents();
-  for (const event of visible) {
+  if (recompute) state.visibleEvents = visibleEvents();
+  const visible = state.visibleEvents;
+  const viewportRows = Math.max(1, Math.ceil(viewport.clientHeight / EVENT_ROW_HEIGHT));
+  const desiredStart = Math.floor(Math.max(0, scrollTop - 32) / EVENT_ROW_HEIGHT) - EVENT_OVERSCAN;
+  const start = Math.min(Math.max(0, desiredStart), Math.max(0, visible.length - viewportRows));
+  const end = Math.min(visible.length, start + viewportRows + EVENT_OVERSCAN * 2);
+  appendVirtualSpacer(rows, start * EVENT_ROW_HEIGHT);
+  for (const event of visible.slice(start, end)) {
     const tr = document.createElement('tr');
     if (event.isSystem) tr.classList.add('system-event');
     if (state.selectedRows.has(event.rowNumber)) tr.classList.add('selected');
-    const values = [event.rowNumber, event.eventClass, oneLine(event.textData), event.loginName || '', event.databaseName || ''];
-    values.forEach((value, index) => {
+    for (const column of visibleColumns()) {
       const td = document.createElement('td');
+      const raw = event[column.key];
+      const value = column.oneLine ? oneLine(raw) : raw;
       td.textContent = String(value == null ? '' : value);
-      if (index === 2) td.title = event.textData || '';
+      if (column.key === 'textData') td.title = event.textData || '';
       tr.append(td);
-    });
+    }
     tr.addEventListener('click', (clickEvent) => selectEvent(event, clickEvent.shiftKey, visible));
     rows.append(tr);
   }
+  appendVirtualSpacer(rows, (visible.length - end) * EVENT_ROW_HEIGHT);
+  viewport.scrollTop = state.followTail ? viewport.scrollHeight : scrollTop;
+  viewport.scrollLeft = scrollLeft;
+  state.lastScrollTop = viewport.scrollTop;
   $('emptyState').classList.toggle('hidden', visible.length > 0);
-  $('eventCount').textContent = `${visible.length} / ${state.events.length}건`;
+  updateEventCount();
+}
+
+function updateEventCount() {
+  $('eventCount').textContent = `${state.visibleEvents.length} / ${state.events.length}건`;
+}
+
+function isEventGridAtBottom() {
+  const viewport = $('gridWrap');
+  return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= EVENT_ROW_HEIGHT;
+}
+
+function appendVirtualSpacer(rows, height) {
+  if (height <= 0) return;
+  const spacer = document.createElement('tr');
+  spacer.className = 'virtual-spacer';
+  const cell = document.createElement('td');
+  cell.colSpan = visibleColumns().length;
+  cell.style.height = `${height}px`;
+  spacer.append(cell);
+  rows.append(spacer);
 }
 
 function renderSqlDetail() {
@@ -531,7 +688,7 @@ function selectEvent(event, extendRange, visible) {
     state.selectedRows.add(event.rowNumber);
     state.selectionAnchor = event.rowNumber;
   }
-  renderEvents();
+  renderEvents(false);
   renderSqlDetail();
 }
 
@@ -592,6 +749,27 @@ window.addEventListener('message', ({ data }) => {
       state.filterPresets = data.presets || [];
       renderFilterPresets(data.selectedId);
       break;
+    case 'columnPreferences':
+      state.visibleOptionalColumns = new Set(data.columns || []);
+      renderColumnOptions();
+      renderEventHeader();
+      renderEvents(false);
+      break;
+    case 'connectionTestResult': {
+      const result = $('connectionTestResult');
+      $('testConnection').disabled = false;
+      const permission = data.info.hasAlterTrace ? 'ALTER TRACE 권한 있음' : 'ALTER TRACE 권한 없음';
+      result.textContent = `연결 성공 · SQL Server ${data.info.productVersion} · ${data.info.edition} · DB ${data.info.databaseName} · ${permission}`;
+      result.className = `connection-test ${data.info.hasAlterTrace ? 'success' : 'warning'}`;
+      break;
+    }
+    case 'connectionTestError': {
+      const result = $('connectionTestResult');
+      $('testConnection').disabled = false;
+      result.textContent = `연결 실패 · ${data.message}`;
+      result.className = 'connection-test warning';
+      break;
+    }
     case 'traceEvent': appendEvent(data.event); break;
     case 'status': updateStatus(data.status, data.details); break;
     case 'toast': showToast(data.message, false); break;

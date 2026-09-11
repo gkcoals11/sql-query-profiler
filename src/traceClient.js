@@ -117,7 +117,7 @@ class LegacyTraceClient {
 
   async expire() {
     if (this.expiring || !['running', 'paused'].includes(this.state)) return;
-    const maxDurationMinutes = this.maxDurationMinutes || 30;
+    const maxDurationMinutes = this.maxDurationMinutes || 5;
     this.expiring = true;
     try {
       await this.end();
@@ -227,6 +227,39 @@ function connect(config) {
   });
 }
 
+async function testProfileConnection(profile) {
+  const credentials = profile.useTraceCredentials
+    ? { user: profile.traceUser, password: profile.tracePassword }
+    : { user: profile.user, password: profile.password };
+  const connection = await connect(buildConnectionConfig(profile, credentials));
+  try {
+    return await queryConnectionInfo(connection);
+  } finally {
+    closeConnection(connection);
+  }
+}
+
+function queryConnectionInfo(connection) {
+  return new Promise((resolve, reject) => {
+    let info;
+    const sql = `SELECT
+      CONVERT(nvarchar(128), SERVERPROPERTY('ProductVersion')) AS productVersion,
+      CONVERT(nvarchar(128), SERVERPROPERTY('Edition')) AS edition,
+      DB_NAME() AS databaseName,
+      HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER TRACE') AS hasAlterTrace`;
+    const request = new Request(sql, (error) => {
+      if (error) reject(error);
+      else if (!info) reject(new Error('연결 정보를 확인하지 못했습니다.'));
+      else resolve(info);
+    });
+    request.on('row', (columns) => {
+      info = Object.fromEntries(columns.map((column) => [column.metadata.colName, column.value]));
+      info.hasAlterTrace = Number(info.hasAlterTrace) === 1;
+    });
+    connection.execSql(request);
+  });
+}
+
 function callProcedure(connection, name, configure) {
   return new Promise((resolve, reject) => {
     const output = {};
@@ -313,7 +346,7 @@ function normalizeEventIds(eventIds) {
 
 function normalizeMaxDuration(value) {
   const minutes = Number(value);
-  return Number.isInteger(minutes) && minutes >= 5 && minutes <= 30 && minutes % 5 === 0 ? minutes : 30;
+  return Number.isInteger(minutes) && minutes >= 5 && minutes <= 30 && minutes % 5 === 0 ? minutes : 5;
 }
 
 function normalizeFilters(filters) {
@@ -340,5 +373,6 @@ module.exports = {
   normalizeMaxDuration,
   DEFAULT_EVENT_IDS,
   CAPTURE_COLUMNS,
-  FILTER_COLUMNS
+  FILTER_COLUMNS,
+  testProfileConnection
 };
