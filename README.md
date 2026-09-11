@@ -2,6 +2,13 @@
 
 Windows와 macOS의 VS Code에서 SQL Server Legacy SQL Trace를 실시간으로 확인하는 Extension입니다. Extended Events 권한 없이 `ALTER TRACE` 권한과 `sp_trace_*` 계열을 사용하며, 운영체제별 네이티브 실행 파일에 의존하지 않습니다.
 
+## 다운로드
+
+- [Legacy SQL Trace Profiler 1.0.5 VSIX 다운로드](https://github.com/gkcoals11/sql-query-profiler/releases/download/v1.0.5/legacy-sql-trace-profiler-1.0.5.vsix)
+- [전체 버전 및 변경사항](https://github.com/gkcoals11/sql-query-profiler/releases)
+
+다운로드한 VSIX는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다.
+
 ## 버전 변경사항
 
 ### 1.0.5
@@ -107,7 +114,7 @@ npm run build
 npm run package
 ```
 
-완성된 `legacy-sql-trace-profiler-1.0.5.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 이 파일을 전달하고, 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치합니다. Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
+완성된 `legacy-sql-trace-profiler-1.0.5.vsix`는 프로젝트의 `outputs` 폴더에 생성됩니다. 배포할 때 GitHub Release에 버전 태그와 변경사항을 작성하고 이 파일을 첨부한 뒤, README 상단 다운로드 링크를 새 버전으로 갱신합니다. 사용자는 VS Code의 Extensions 화면 우측 상단 `...` → `Install from VSIX...`에서 설치하며, Marketplace 배포가 필요하면 publisher 등록 후 공식 `@vscode/vsce` 도구의 `vsce publish` 절차를 사용합니다.
 
 ## 개발 중 바로 확인
 
